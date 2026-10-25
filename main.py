@@ -1,7 +1,7 @@
 from os import getenv
 from spreadsheet import write_spreadsheet 
 from driver import setup_driver
-from ticket import login_ticket, set_state, normalize, wait_loading_finish, get_main_data, get_ticket_data
+from ticket import login_ticket, set_state, show_all_entries, normalize, wait_loading_finish, get_main_data, get_ticket_data
 
 def main():
     username = getenv("MY_USERNAME")
@@ -12,6 +12,7 @@ def main():
         print("connected.")
         set_state(driver, "DC")
         wait_loading_finish(driver)
+        show_all_entries(driver)
         data = get_main_data(driver)
         tickets = get_ticket_data(driver, data)
         driver.quit()

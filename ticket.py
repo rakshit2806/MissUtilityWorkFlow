@@ -219,6 +219,56 @@ def set_state(driver: WebDriver, state: str = "DC", timeout: int = 120) -> bool:
     return False
 
 
+def show_all_entries(driver: WebDriver, table_id: str = "ExcavatorTicketTable", timeout: int = 300) -> None:
+    """Make the ticket table show every entry on one page instead of 10 per page."""
+    from time import time, sleep as _sleep
+    from selenium.webdriver.support.ui import Select
+
+    def info():
+        try:
+            return driver.find_element(By.ID, f"{table_id}_info").text.strip()
+        except Exception:
+            return ""
+
+    print(f"before: {info()!r}")
+    done = False
+    # 1) DataTables API: page length -1 means 'All'
+    try:
+        done = driver.execute_script("""
+            var id = '#' + arguments[0];
+            if (window.jQuery && jQuery.fn.dataTable && jQuery.fn.dataTable.isDataTable(id)) {
+                jQuery(id).DataTable().page.len(-1).draw();
+                return true;
+            }
+            return false;
+        """, table_id)
+        print(f"set page length via DataTables API: {done}")
+    except Exception as e:
+        print(f"DataTables API failed: {e}")
+
+    # 2) Fallback: pick the largest option in the 'Show N entries' dropdown
+    if not done:
+        try:
+            sel = driver.find_element(By.XPATH, f"//select[@name='{table_id}_length'] | //div[@id='{table_id}_length']//select")
+            s = Select(sel)
+            vals = [o.get_attribute("value") for o in s.options]
+            best = "-1" if "-1" in vals else max(vals, key=lambda v: int(v) if v.lstrip("-").isdigit() else 0)
+            s.select_by_value(best)
+            print(f"set 'Show entries' to {best!r} (options {vals})")
+        except Exception as e:
+            print(f"could not change 'Show entries': {e}")
+
+    # Wait until the info text says it is showing everything (e.g. 'Showing 1 to 750 of 750 entries')
+    import re as _re
+    end = time() + timeout
+    while time() < end:
+        m = _re.search(r"to\s+([\d,]+)\s+of\s+([\d,]+)", info())
+        if m and m.group(1) == m.group(2):
+            break
+        _sleep(5)
+    print(f"after: {info()!r}")
+
+
 from time import sleep
 def wait_loading_finish(driver: WebDriver):
     print("waiting data to finish loading, sleeping 5 minutes.")
