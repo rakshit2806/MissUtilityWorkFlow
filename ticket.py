@@ -88,76 +88,74 @@ def _is_state_match(text: str, state: str) -> bool:
     return t in targets or any(t.startswith(n + " ") or t.endswith(" " + n) or f"({n})" in t for n in targets)
 
 
-def set_state(driver: WebDriver, state: str = "DC") -> bool:
-    """Open the 'set state' page and choose the given state, then return to the ticket list."""
+def _state_selects(driver: WebDriver) -> list:
+    """Return <select> elements that look like the state picker (have an MD/DC style option)."""
     from selenium.webdriver.support.ui import Select
-    set_state_url = "https://md.itic.occinc.com/excavatorSetState"
-    tickets_url = "https://md.itic.occinc.com/excavatorTickets"
-    delay(2, 3)
-    driver.get(set_state_url)
-    delay(3, 5)
-    print(f"set state page: {driver.current_url} | title: {driver.title!r}")
-    chosen = False
-
-    # 1) Dropdowns
+    found = []
     for sel in driver.find_elements(By.TAG_NAME, "select"):
         try:
-            s = Select(sel)
-            for opt in s.options:
-                val = (opt.get_attribute("value") or "")
-                if _is_state_match(opt.text, state) or val.strip().upper() == state.upper():
-                    s.select_by_visible_text(opt.text)
-                    print(f"selected state option: {opt.text!r} (value={val!r})")
-                    chosen = True
-                    break
-        except Exception as e:
-            print(f"could not use dropdown: {e}")
-        if chosen:
+            texts = [o.text.strip() for o in Select(sel).options]
+        except Exception:
+            continue
+        if any(t.upper().startswith(("MD", "DC", "DE ", "VA")) or "SHORE" in t.upper() or "COLUMBIA" in t.upper() for t in texts):
+            found.append((sel, texts))
+    return found
+
+
+def set_state(driver: WebDriver, state: str = "DC", timeout: int = 120) -> bool:
+    """On the My Tickets page, change the state dropdown (e.g. 'MD - Western Shore') to the given state."""
+    from time import time, sleep as _sleep
+    from selenium.webdriver.support.ui import Select
+    tickets_url = "https://md.itic.occinc.com/excavatorTickets"
+    if "excavatorTickets" not in driver.current_url:
+        driver.get(tickets_url)
+
+    end = time() + timeout
+    selects = []
+    while time() < end:
+        selects = _state_selects(driver)
+        if selects:
             break
+        _sleep(3)
+    print(f"page: {driver.current_url} | state dropdowns found: {len(selects)}")
+    for sel, texts in selects:
+        print(f"  dropdown id={sel.get_attribute('id')!r} name={sel.get_attribute('name')!r} options={texts}")
 
-    # 2) Radio buttons / links / buttons labelled with the state
-    if not chosen:
-        for elm in driver.find_elements(By.XPATH, "//input[@type='radio'] | //label | //a | //button | //li | //span | //div[not(*)]"):
-            try:
-                label = elm.text or elm.get_attribute("value") or ""
-                if elm.is_displayed() and _is_state_match(label, state):
-                    elm.click()
-                    print(f"clicked state element: <{elm.tag_name}> {label!r}")
-                    chosen = True
-                    break
-            except Exception:
-                continue
-
-    # Submit if the page has a submit/continue button
-    if chosen:
-        delay(1, 2)
-        submit_words = {"continue", "submit", "save", "set state", "set", "go", "ok", "select", "change state", "change"}
-        for btn in driver.find_elements(By.XPATH, "//button | //input[@type='submit' or @type='button']"):
-            try:
-                label = " ".join((btn.text or btn.get_attribute("value") or "").lower().split())
-                is_submit = (btn.get_attribute("type") or "").lower() == "submit"
-                if btn.is_displayed() and (label in submit_words or (is_submit and "log" not in label)):
-                    print(f"clicking submit: {label!r}")
-                    btn.click()
-                    break
-            except Exception:
-                continue
-        delay(3, 5)
-    else:
-        # Print what is on the page so the selectors can be adjusted
-        print(f"WARNING: could not find state {state!r} on the set-state page. Page elements:")
+    if not selects:
+        print("WARNING: no state dropdown found. All dropdowns on page:")
         for sel in driver.find_elements(By.TAG_NAME, "select"):
-            opts = [o.text for o in Select(sel).options][:60]
-            print(f"  select id={sel.get_attribute('id')!r} name={sel.get_attribute('name')!r} options={opts}")
-        for elm in driver.find_elements(By.XPATH, "//a | //button | //input[@type='submit' or @type='radio' or @type='button']")[:80]:
             try:
-                print(f"  <{elm.tag_name}> id={elm.get_attribute('id')!r} text={(elm.text or elm.get_attribute('value') or '').strip()[:60]!r}")
+                print(f"  id={sel.get_attribute('id')!r} options={[o.text for o in Select(sel).options][:40]}")
             except Exception:
                 pass
+        return False
 
-    driver.get(tickets_url)
-    print(f"back on tickets page: {driver.current_url}")
-    return chosen
+    # Prefer the visible dropdown next to 'My Tickets'; try each until one works
+    selects.sort(key=lambda x: 0 if x[0].is_displayed() else 1)
+    for sel, texts in selects:
+        target = next((t for t in texts if _is_state_match(t, state)), None)
+        if target is None:
+            print(f"WARNING: no {state!r} option in dropdown {sel.get_attribute('id')!r}")
+            continue
+        try:
+            s = Select(sel)
+            if s.first_selected_option.text.strip() == target:
+                print(f"state already set to {target!r}")
+                return True
+            s.select_by_visible_text(target)
+            print(f"selected state {target!r}")
+        except Exception as e:
+            print(f"could not select {target!r}: {e}")
+            continue
+        _sleep(10)  # let the page reload for the new state
+        # confirm
+        for sel2, _ in _state_selects(driver):
+            try:
+                print(f"  dropdown now shows: {Select(sel2).first_selected_option.text.strip()!r}")
+            except Exception:
+                pass
+        return True
+    return False
 
 
 from time import sleep
