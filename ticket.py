@@ -106,7 +106,12 @@ def get_main_data(driver: WebDriver) -> list[dict]:
         col_cross_street = lookup_field("cross street", fields)
         col_expiration = lookup_field("expiration", fields)
         col_id = lookup_field("ticket #", fields)
+        needed = max(col_release, col_response, col_cross_street, col_expiration, col_id)
         for t in tickets:
+            cells = t.find_elements(By.XPATH, './td')
+            if len(cells) < needed or 0 in (col_release, col_response, col_cross_street, col_expiration, col_id):
+                print(f"skipping row (not a ticket): {t.text.strip()!r}")
+                continue
             expire_date = t.find_element(By.XPATH, f'./td[{col_expiration}]').text
             days_to_expire = expire_date_days(expire_date)
             if is_expired_ticket(days_to_expire):
