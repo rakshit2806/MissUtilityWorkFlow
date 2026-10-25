@@ -130,31 +130,92 @@ def set_state(driver: WebDriver, state: str = "DC", timeout: int = 120) -> bool:
                 pass
         return False
 
-    # Prefer the visible dropdown next to 'My Tickets'; try each until one works
-    selects.sort(key=lambda x: 0 if x[0].is_displayed() else 1)
-    for sel, texts in selects:
-        target = next((t for t in texts if _is_state_match(t, state)), None)
-        if target is None:
-            print(f"WARNING: no {state!r} option in dropdown {sel.get_attribute('id')!r}")
-            continue
-        try:
-            s = Select(sel)
-            if s.first_selected_option.text.strip() == target:
-                print(f"state already set to {target!r}")
-                return True
-            s.select_by_visible_text(target)
-            print(f"selected state {target!r}")
-        except Exception as e:
-            print(f"could not select {target!r}: {e}")
-            continue
-        _sleep(10)  # let the page reload for the new state
-        # confirm
+    def current_states():
+        out = []
         for sel2, _ in _state_selects(driver):
             try:
-                print(f"  dropdown now shows: {Select(sel2).first_selected_option.text.strip()!r}")
+                out.append(Select(sel2).first_selected_option.text.strip())
             except Exception:
                 pass
+        return out
+
+    # Use dropdowns that actually contain the target state
+    candidates = [(sel, texts) for sel, texts in selects if any(_is_state_match(t, state) for t in texts)]
+    if not candidates:
+        print(f"WARNING: no dropdown has a {state!r} option")
+        return False
+    sel, texts = candidates[0]
+    sel_id = sel.get_attribute("id")
+    sel_name = sel.get_attribute("name") or sel_id or "selState"
+    target = next(t for t in texts if _is_state_match(t, state))
+    opt_value = next((o.get_attribute("value") for o in Select(sel).options if o.text.strip() == target), target)
+    form_action = driver.execute_script("return arguments[0].form ? arguments[0].form.action + ' [' + arguments[0].form.method + ']' : null;", sel)
+    print(f"using dropdown {sel_id!r}: option {target!r} value={opt_value!r} onchange={sel.get_attribute('onchange')!r} form={form_action!r}")
+    print(f"dropdown html: {(sel.get_attribute('outerHTML') or '')[:600]}")
+
+    def done():
+        _sleep(8)
+        now = current_states()
+        print(f"  url now: {driver.current_url} | dropdowns show: {now}")
+        return any(_is_state_match(t, state) for t in now)
+
+    # Attempt 1: normal selection (fires the page's change handler)
+    try:
+        Select(sel).select_by_value(opt_value)
+        print("attempt 1: selected via Selenium")
+    except Exception as e:
+        print(f"attempt 1 failed: {e}")
+    if done():
         return True
+
+    # Attempt 2: set value with JavaScript and fire change through jQuery and natively
+    try:
+        sel = driver.find_element(By.ID, sel_id)
+        driver.execute_script("""
+            var s = arguments[0], v = arguments[1];
+            s.value = v;
+            if (window.jQuery) { jQuery(s).val(v).trigger('change'); }
+            s.dispatchEvent(new Event('change', {bubbles: true}));
+        """, sel, opt_value)
+        print("attempt 2: set via JavaScript + change event")
+    except Exception as e:
+        print(f"attempt 2 failed: {e}")
+    if done():
+        return True
+
+    # Attempt 3: submit the form the dropdown belongs to
+    try:
+        sel = driver.find_element(By.ID, sel_id)
+        submitted = driver.execute_script("""
+            var s = arguments[0], v = arguments[1];
+            s.value = v;
+            if (s.form) { s.form.submit(); return true; } return false;
+        """, sel, opt_value)
+        print(f"attempt 3: form submit -> {submitted}")
+    except Exception as e:
+        print(f"attempt 3 failed: {e}")
+    if done():
+        return True
+
+    # Attempt 4: call the set-state page directly
+    from urllib.parse import quote
+    name = sel_name
+    for url in [
+        f"https://md.itic.occinc.com/excavatorSetState?{quote(name or 'selState')}={quote(opt_value)}",
+        f"https://md.itic.occinc.com/excavatorSetState?state={quote(opt_value)}",
+    ]:
+        try:
+            driver.get(url)
+            print(f"attempt 4: opened {url}")
+            _sleep(4)
+            if "excavatorTickets" not in driver.current_url:
+                driver.get(tickets_url)
+            if done():
+                return True
+        except Exception as e:
+            print(f"attempt 4 failed for {url}: {e}")
+
+    print(f"WARNING: could not switch state to {state!r}")
     return False
 
 
