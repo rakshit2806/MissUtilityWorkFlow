@@ -81,6 +81,85 @@ def login_ticket(driver: WebDriver, username: str, password: str) -> None:
     if login_btn:
         login_btn.click()
 
+def _is_state_match(text: str, state: str) -> bool:
+    t = " ".join((text or "").upper().replace(".", "").split())
+    names = {"DC": ["DC", "DISTRICT OF COLUMBIA", "WASHINGTON DC"]}
+    targets = names.get(state.upper(), [state.upper()])
+    return t in targets or any(t.startswith(n + " ") or t.endswith(" " + n) or f"({n})" in t for n in targets)
+
+
+def set_state(driver: WebDriver, state: str = "DC") -> bool:
+    """Open the 'set state' page and choose the given state, then return to the ticket list."""
+    from selenium.webdriver.support.ui import Select
+    set_state_url = "https://md.itic.occinc.com/excavatorSetState"
+    tickets_url = "https://md.itic.occinc.com/excavatorTickets"
+    delay(2, 3)
+    driver.get(set_state_url)
+    delay(3, 5)
+    print(f"set state page: {driver.current_url} | title: {driver.title!r}")
+    chosen = False
+
+    # 1) Dropdowns
+    for sel in driver.find_elements(By.TAG_NAME, "select"):
+        try:
+            s = Select(sel)
+            for opt in s.options:
+                val = (opt.get_attribute("value") or "")
+                if _is_state_match(opt.text, state) or val.strip().upper() == state.upper():
+                    s.select_by_visible_text(opt.text)
+                    print(f"selected state option: {opt.text!r} (value={val!r})")
+                    chosen = True
+                    break
+        except Exception as e:
+            print(f"could not use dropdown: {e}")
+        if chosen:
+            break
+
+    # 2) Radio buttons / links / buttons labelled with the state
+    if not chosen:
+        for elm in driver.find_elements(By.XPATH, "//input[@type='radio'] | //label | //a | //button | //li | //span | //div[not(*)]"):
+            try:
+                label = elm.text or elm.get_attribute("value") or ""
+                if elm.is_displayed() and _is_state_match(label, state):
+                    elm.click()
+                    print(f"clicked state element: <{elm.tag_name}> {label!r}")
+                    chosen = True
+                    break
+            except Exception:
+                continue
+
+    # Submit if the page has a submit/continue button
+    if chosen:
+        delay(1, 2)
+        submit_words = {"continue", "submit", "save", "set state", "set", "go", "ok", "select", "change state", "change"}
+        for btn in driver.find_elements(By.XPATH, "//button | //input[@type='submit' or @type='button']"):
+            try:
+                label = " ".join((btn.text or btn.get_attribute("value") or "").lower().split())
+                is_submit = (btn.get_attribute("type") or "").lower() == "submit"
+                if btn.is_displayed() and (label in submit_words or (is_submit and "log" not in label)):
+                    print(f"clicking submit: {label!r}")
+                    btn.click()
+                    break
+            except Exception:
+                continue
+        delay(3, 5)
+    else:
+        # Print what is on the page so the selectors can be adjusted
+        print(f"WARNING: could not find state {state!r} on the set-state page. Page elements:")
+        for sel in driver.find_elements(By.TAG_NAME, "select"):
+            opts = [o.text for o in Select(sel).options][:60]
+            print(f"  select id={sel.get_attribute('id')!r} name={sel.get_attribute('name')!r} options={opts}")
+        for elm in driver.find_elements(By.XPATH, "//a | //button | //input[@type='submit' or @type='radio' or @type='button']")[:80]:
+            try:
+                print(f"  <{elm.tag_name}> id={elm.get_attribute('id')!r} text={(elm.text or elm.get_attribute('value') or '').strip()[:60]!r}")
+            except Exception:
+                pass
+
+    driver.get(tickets_url)
+    print(f"back on tickets page: {driver.current_url}")
+    return chosen
+
+
 from time import sleep
 def wait_loading_finish(driver: WebDriver):
     print("waiting data to finish loading, sleeping 5 minutes.")
