@@ -3,7 +3,7 @@ name: Run Script
 on:
   workflow_dispatch:
   schedule:
-    - cron: "38 9 * * *"
+    - cron: "30 6 * * *" # 12:00 PM IST (06:30 UTC)
 
 jobs:
   build:
