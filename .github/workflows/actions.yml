@@ -29,6 +29,9 @@ jobs:
           MY_PASSWORD: ${{ secrets.MY_PASSWORD }}
         run: python main.py
 
+      - name: Get latest changes before saving
+        run: git pull --rebase --autostash origin ${{ github.ref_name }}
+
       - name: Commit and push changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
